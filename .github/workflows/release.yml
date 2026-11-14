@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   release:
-    runs-on: macos-14
+    runs-on: macos-15
     env:
       MONORAIL_SIGNING_CERT: ${{ secrets.MONORAIL_SIGNING_CERT }}
       MONORAIL_SIGNING_PASSWORD: ${{ secrets.MONORAIL_SIGNING_PASSWORD }}
