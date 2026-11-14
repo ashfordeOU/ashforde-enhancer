@@ -17,12 +17,15 @@ enum Setup {
         var failsafe = false
         var sleepDisabled = false
         var scripts: [String] = []
+        /// The fan helper is in place and its rule works (1.1).
+        var fan = false
 
-        var installed: Bool { rule && failsafe }
+        /// Everything this version sets up, so a Mac set up by 1.0 offers to set up again.
+        var installed: Bool { rule && failsafe && fan }
 
         var json: String {
             let list = scripts.map { "\"\($0)\"" }.joined(separator: ",")
-            return "{\"enhancer\":\(Enhancer.interfaceVersion),\"version\":\"\(Enhancer.version)\",\"rule\":\(rule),\"failsafe\":\(failsafe),\"sleepDisabled\":\(sleepDisabled),\"scripts\":[\(list)]}"
+            return "{\"enhancer\":\(Enhancer.interfaceVersion),\"version\":\"\(Enhancer.version)\",\"rule\":\(rule),\"failsafe\":\(failsafe),\"sleepDisabled\":\(sleepDisabled),\"fan\":\(fan),\"scripts\":[\(list)]}"
         }
     }
 
@@ -48,6 +51,8 @@ enum Setup {
         status.rule = run("/usr/bin/sudo", ["-n", "-l", Enhancer.pmset, "-a", "disablesleep", "1"]).status == 0
         status.failsafe = FileManager.default.fileExists(atPath: Enhancer.daemonPlistPath)
         status.sleepDisabled = Enhancer.sleepDisabled(pmsetOutput: run(Enhancer.pmset, ["-g"]).output)
+        status.fan = FileManager.default.isExecutableFile(atPath: FanHelper.helperPath)
+            && run("/usr/bin/sudo", ["-n", "-l", FanHelper.helperPath, "status"]).status == 0
         status.scripts = Enhancer.clients.filter {
             FileManager.default.isExecutableFile(atPath: scriptsRoot.appendingPathComponent("\($0)/\(Enhancer.lidScriptName)").path)
         }
@@ -63,20 +68,27 @@ enum Setup {
             let file = folder.appendingPathComponent(Enhancer.lidScriptName)
             try Enhancer.lidScript().write(to: file, atomically: true, encoding: .utf8)
             try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
+            if FanHelper.clients.contains(client) {
+                let fan = folder.appendingPathComponent(FanHelper.scriptName)
+                try FanHelper.script().write(to: fan, atomically: true, encoding: .utf8)
+                try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fan.path)
+            }
         }
     }
 
     static func removeScripts() {
         for client in Enhancer.clients {
             try? FileManager.default.removeItem(at: scriptsRoot.appendingPathComponent("\(client)/\(Enhancer.lidScriptName)"))
+            try? FileManager.default.removeItem(at: scriptsRoot.appendingPathComponent("\(client)/\(FanHelper.scriptName)"))
         }
     }
 
     enum Failure: LocalizedError {
-        case user, cancelled, failed(String)
+        case user, cancelled, noHelper, failed(String)
         var errorDescription: String? {
             switch self {
             case .user: return "This account's name can't go in a sudo rule."
+            case .noHelper: return "The fan helper is missing from this copy of Ashforde Enhancer. Download it again."
             case .cancelled: return "Cancelled."
             case .failed(let why): return why
             }
@@ -95,11 +107,20 @@ enum Setup {
         }
     }
 
-    /// Writes the three files into `stage` (a folder only this user can write) and returns the root script.
+    /// The fan helper inside this app (Contents/MacOS/ashforde-fan, signed with it).
+    static var bundledHelper: URL? {
+        Bundle.main.url(forAuxiliaryExecutable: FanHelper.name)
+            ?? URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent().appendingPathComponent(FanHelper.name)
+    }
+
+    /// Writes the files into `stage` (a folder only this user can write) and returns the root script.
     static func stage(_ stage: URL) throws -> String {
         let user = NSUserName()
-        guard let rule = Enhancer.sudoersRule(user: user) else { throw Failure.user }
+        guard let rule = Enhancer.sudoersRule(user: user), let fanRule = FanHelper.sudoersRule(user: user) else { throw Failure.user }
+        guard let helper = bundledHelper, FileManager.default.isExecutableFile(atPath: helper.path) else { throw Failure.noHelper }
         try rule.write(to: stage.appendingPathComponent("rule"), atomically: true, encoding: .utf8)
+        try fanRule.write(to: stage.appendingPathComponent("fan-rule"), atomically: true, encoding: .utf8)
+        try FileManager.default.copyItem(at: helper, to: stage.appendingPathComponent("fan"))
         try Enhancer.failsafeScript().write(to: stage.appendingPathComponent("failsafe"), atomically: true, encoding: .utf8)
         try Enhancer.daemonPlist().write(to: stage.appendingPathComponent("daemon.plist"), atomically: true, encoding: .utf8)
         guard let script = Enhancer.installScript(user: user, stage: stage.path) else { throw Failure.user }
@@ -170,7 +191,7 @@ final class Model: ObservableObject {
         DispatchQueue.main.async {
             do {
                 try install ? Setup.install() : Setup.uninstall()
-                self.message = install ? "Done. Lid-closed mode won't ask for your password any more." : "Removed. Sleep works as usual again."
+                self.message = install ? "Done. Lid-closed mode won't ask for your password any more, and Monorail can set fan speeds." : "Removed. Sleep and fans work as usual again."
             } catch Setup.Failure.cancelled {
             } catch {
                 self.message = error.localizedDescription
@@ -190,16 +211,18 @@ struct EnhancerView: View {
                 Image(systemName: "laptopcomputer").font(.system(size: 34)).foregroundStyle(.tint)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Ashforde Enhancer").font(.system(size: 20, weight: .bold))
-                    Text("Lid-closed mode without the password, for Monorail, Signalbox and Keeper.")
+                    Text("Lid-closed mode without the password for Monorail, Signalbox and Keeper, and fan control for Monorail.")
                         .font(.system(size: 12)).foregroundStyle(.secondary)
                 }
             }
             if let from = model.from { Text("Opened from \(from).").font(.system(size: 11)).foregroundStyle(.secondary) }
             VStack(alignment: .leading, spacing: 8) {
                 row("Permission to turn sleep off and on", model.status.rule,
-                    "Only `pmset -a disablesleep 0` and `1`, only for you. Nothing else runs without your password.")
+                    "Only `pmset -a disablesleep 0` and `1`, only for you.")
+                row("Permission to set fan speeds", model.status.fan,
+                    "Only the small fan helper, only for you: read the fans, set one to a speed inside its own range, or hand them back to macOS.")
                 row("Fail-safe", model.status.failsafe,
-                    "Once a minute: if sleep is off and none of Ashforde's apps is running, sleep goes back on.")
+                    "Once a minute: if none of Ashforde's apps is running, sleep goes back on and the fans go back to macOS.")
                 row("Ready in your apps", !model.status.scripts.isEmpty,
                     model.status.scripts.isEmpty ? "Not set up yet." : "Set up for \(model.status.scripts.count) Ashforde apps.")
             }

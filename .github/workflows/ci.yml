@@ -41,8 +41,29 @@ jobs:
           sudo /bin/sh /Library/PrivilegedHelperTools/org.ashforde.enhancer.failsafe
           pmset -g | grep -E 'SleepDisabled[[:space:]]+0'
           "$LID" on; "$LID" off; pmset -g | grep -E 'SleepDisabled[[:space:]]+0'
+          # The fan helper (GitHub's Mac is a VM with no fans: status answers, auto has nothing to undo).
+          FAN=/Library/PrivilegedHelperTools/ashforde-fan
+          stat -f '%Su:%Sg %Lp' "$FAN" | grep -qx 'root:wheel 755'
+          stat -f '%Su:%Sg %Lp' /etc/sudoers.d/ashforde-fan | grep -qx 'root:wheel 440'
+          echo "--- fan rule"; sudo cat /etc/sudoers.d/ashforde-fan
+          codesign --verify --strict "$FAN"
+          FANSH="$HOME/Library/Application Scripts/org.ashforde.monorail/ashforde-fan.sh"
+          "$FANSH" status | tee /dev/stderr | grep -q '"helper":1'
+          "$LID" status | grep -q '"fan":true'
+          "$FANSH" auto
+          ! "$FANSH" set 0 99999
+          ! "$FANSH" set 0 1 2
+          ! sudo -n "$FAN" set 0 -5
+          ! sudo -n "$FAN" set 10 2000
+          ! "$FAN" auto  # needs root
+          # The fail-safe hands the fans back when the helper had them and no Ashforde app is running.
+          sudo touch /var/db/ashforde-fan.forced
+          sudo /bin/sh /Library/PrivilegedHelperTools/org.ashforde.enhancer.failsafe
+          test ! -e /var/db/ashforde-fan.forced
           "$BIN" status
           "$BIN" print-uninstall | sudo /bin/sh
           test ! -e /etc/sudoers.d/ashforde-lid
+          test ! -e /etc/sudoers.d/ashforde-fan
+          test ! -e /Library/PrivilegedHelperTools/ashforde-fan
           ! sudo launchctl print system/org.ashforde.enhancer.failsafe >/dev/null 2>&1
           echo "All good."
