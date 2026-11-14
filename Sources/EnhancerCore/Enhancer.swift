@@ -28,14 +28,14 @@ public enum Enhancer {
 
     /// The apps that use it: their scripts folders get the lid script.
     public static let clients = [
-        "org.ashforde.monorail.appstore",  // Loop
+        "org.ashforde.monorail.appstore",  // Glance
         "org.ashforde.monorail",  // Monorail (direct; it can also call sudo itself)
         "io.github.ashfordeou.keeper",  // Keeper (direct)
         "io.github.ashfordeou.keeper.appstore",  // Hangar (Keeper's App Store edition)
     ]
 
     /// Process names of Ashforde's apps: while any runs, the fail-safe leaves sleep alone.
-    public static let watchedProcesses = ["Monorail", "Loop", "Keeper", "Hangar"]
+    public static let watchedProcesses = ["Monorail", "Glance", "Keeper", "Hangar"]
 
     /// A macOS short user name we're willing to put in a sudoers rule.
     public static func isValidUser(_ name: String) -> Bool {
@@ -48,7 +48,7 @@ public enum Enhancer {
     public static func sudoersRule(user: String) -> String? {
         guard isValidUser(user) else { return nil }
         return """
-            # Ashforde Enhancer \(version): lid-closed mode for Ashforde's apps (Monorail, Loop, Keeper, Hangar).
+            # Ashforde Enhancer \(version): lid-closed mode for Ashforde's apps (Monorail, Glance, Keeper, Hangar).
             # Allows only turning sleep off and on again. Remove with Ashforde Enhancer, or delete this file.
             \(user) ALL=(root) NOPASSWD: \(pmset) -a disablesleep 0, \(pmset) -a disablesleep 1
 

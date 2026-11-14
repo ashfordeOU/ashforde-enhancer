@@ -3,7 +3,7 @@ import AppKit
 import EnhancerCore
 import SwiftUI
 
-/// Ashforde Enhancer: one setup so lid-closed mode in Ashforde's apps (Loop and Keeper from the
+/// Ashforde Enhancer: one setup so lid-closed mode in Ashforde's apps (Glance and Keeper from the
 /// App Store, and the downloaded Monorail and Keeper) no longer asks for the password every time.
 ///
 ///     AshfordeEnhancer                  opens the window
@@ -190,7 +190,7 @@ struct EnhancerView: View {
                 Image(systemName: "laptopcomputer").font(.system(size: 34)).foregroundStyle(.tint)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Ashforde Enhancer").font(.system(size: 20, weight: .bold))
-                    Text("Lid-closed mode without the password, for Monorail, Loop and Keeper.")
+                    Text("Lid-closed mode without the password, for Monorail, Glance and Keeper.")
                         .font(.system(size: 12)).foregroundStyle(.secondary)
                 }
             }
