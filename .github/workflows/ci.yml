@@ -16,7 +16,7 @@ jobs:
 
   mac:
     name: Build and set up for real (macOS)
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - run: swift test
