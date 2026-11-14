@@ -1,0 +1,48 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  core:
+    name: Core tests (Linux)
+    runs-on: ubuntu-latest
+    container: swift:5.10
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift test
+
+  mac:
+    name: Build and set up for real (macOS)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift test
+      - name: Build the app (ad hoc)
+        run: scripts/build-app.sh
+      - name: Set up, use and remove on this Mac
+        run: |
+          set -euo pipefail
+          BIN="dist/Ashforde Enhancer.app/Contents/MacOS/AshfordeEnhancer"
+          "$BIN" version
+          STAGE="$(mktemp -d)"; chmod 700 "$STAGE"
+          "$BIN" stage "$STAGE" > "$STAGE/install.sh"
+          sudo /bin/sh "$STAGE/install.sh"
+          echo "--- rule"; sudo cat /etc/sudoers.d/ashforde-lid; sudo visudo -c
+          stat -f '%Su:%Sg %Lp' /etc/sudoers.d/ashforde-lid | grep -qx 'root:wheel 440'
+          sudo launchctl print system/org.ashforde.enhancer.failsafe | head -5
+          LID="$HOME/Library/Application Scripts/org.ashforde.monorail.appstore/ashforde-lid.sh"
+          "$LID" status
+          "$LID" on; pmset -g | grep -E 'SleepDisabled[[:space:]]+1'
+          "$LID" status | grep -q '"sleepDisabled":true'
+          # The fail-safe: no Ashforde app is running here, so it turns sleep back on.
+          sudo /bin/sh /Library/PrivilegedHelperTools/org.ashforde.enhancer.failsafe
+          pmset -g | grep -E 'SleepDisabled[[:space:]]+0'
+          "$LID" on; "$LID" off; pmset -g | grep -E 'SleepDisabled[[:space:]]+0'
+          "$BIN" status
+          "$BIN" print-uninstall | sudo /bin/sh
+          test ! -e /etc/sudoers.d/ashforde-lid
+          ! sudo launchctl print system/org.ashforde.enhancer.failsafe >/dev/null 2>&1
+          echo "All good."

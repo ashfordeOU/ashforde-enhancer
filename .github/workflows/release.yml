@@ -1,0 +1,56 @@
+name: Release
+# Runs when VERSION changes on main (or by hand): builds, signs with Developer ID, notarises,
+# staples and publishes a GitHub release. Needs the same secrets as ashfordeOU/monorail:
+# MONORAIL_SIGNING_CERT, MONORAIL_SIGNING_PASSWORD, APPLE_ID, APPLE_TEAM_ID, APPLE_APP_PASSWORD.
+on:
+  push:
+    branches: [main]
+    paths: [VERSION]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-14
+    env:
+      MONORAIL_SIGNING_CERT: ${{ secrets.MONORAIL_SIGNING_CERT }}
+      MONORAIL_SIGNING_PASSWORD: ${{ secrets.MONORAIL_SIGNING_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift test
+      - name: Import signing certificate
+        if: env.MONORAIL_SIGNING_CERT != ''
+        run: scripts/ci-import-signing-cert.sh
+      - name: No Developer ID yet
+        if: env.MONORAIL_SIGNING_CERT == ''
+        run: echo "::warning::Add the signing secrets (see README) to publish a release; nothing was published."
+      - name: Build and sign
+        if: env.MONORAIL_SIGNING_CERT != ''
+        run: scripts/build-app.sh
+      - name: Notarise and staple
+        if: env.MONORAIL_SIGNING_CERT != '' && env.APPLE_ID != '' && env.APPLE_TEAM_ID != '' && env.APPLE_APP_PASSWORD != ''
+        run: |
+          set -euo pipefail
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          xcrun notarytool submit "dist/AshfordeEnhancer-$VERSION.zip" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_PASSWORD" --wait --timeout 2h
+          xcrun stapler staple "dist/Ashforde Enhancer.app"
+          rm "dist/AshfordeEnhancer-$VERSION.zip"
+          (cd dist && ditto -c -k --keepParent "Ashforde Enhancer.app" "AshfordeEnhancer-$VERSION.zip")
+          spctl --assess --type execute --verbose "dist/Ashforde Enhancer.app"
+      - name: Publish
+        # Only a notarised build goes out.
+        if: env.MONORAIL_SIGNING_CERT != '' && env.APPLE_ID != '' && env.APPLE_TEAM_ID != '' && env.APPLE_APP_PASSWORD != ''
+        run: |
+          set -euo pipefail
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          NOTES="$(awk -v v="## [$VERSION]" 'index($0, v) == 1 {on=1; next} /^## \[/ {on=0} on' CHANGELOG.md)"
+          (cd dist && shasum -a 256 "AshfordeEnhancer-$VERSION.zip" > "AshfordeEnhancer-$VERSION.zip.sha256")
+          gh release create "v$VERSION" "dist/AshfordeEnhancer-$VERSION.zip" "dist/AshfordeEnhancer-$VERSION.zip.sha256" \
+            --title "Ashforde Enhancer $VERSION" --notes "$NOTES" --target "$GITHUB_SHA"
