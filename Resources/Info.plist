@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>Ashforde Enhancer</string>
+	<key>CFBundleDisplayName</key>
+	<string>Ashforde Enhancer</string>
+	<key>CFBundleIdentifier</key>
+	<string>org.ashforde.enhancer</string>
+	<key>CFBundleExecutable</key>
+	<string>AshfordeEnhancer</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>VERSION</string>
+	<key>CFBundleVersion</key>
+	<string>BUILD</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>13.0</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.utilities</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>© 2026 Ashforde OÜ</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Ashforde Enhancer asks macOS for your administrator password once, to set up lid-closed mode.</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>org.ashforde.enhancer</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>ashforde-enhancer</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>
