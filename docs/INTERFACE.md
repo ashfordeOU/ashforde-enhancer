@@ -1,6 +1,6 @@
 # Interface (version 1)
 
-How Monorail, Signalbox and Keeper use Ashforde Enhancer. Everything below stays the same within an
+How Monorail, Loop and Keeper use Ashforde Enhancer. Everything below stays the same within an
 interface version; a change of shape bumps `enhancer` in the status answer.
 
 ## What it sets up
@@ -8,14 +8,14 @@ interface version; a change of shape bumps `enhancer` in the status answer.
 | Piece | Where | What |
 |---|---|---|
 | The rule | `/etc/sudoers.d/ashforde-lid` (root:wheel, 0440, checked with `visudo -cf` first) | `<user> ALL=(root) NOPASSWD: /usr/bin/pmset -a disablesleep 0, /usr/bin/pmset -a disablesleep 1`, for the person who set it up only |
-| The fail-safe | `/Library/LaunchDaemons/org.ashforde.enhancer.failsafe.plist` running `/Library/PrivilegedHelperTools/org.ashforde.enhancer.failsafe` every 60 s | If `pmset -g` shows `SleepDisabled 1` and no process named `Monorail`, `Signalbox`, `Keeper` or `Hangar` is running, runs `pmset -a disablesleep 0` |
+| The fail-safe | `/Library/LaunchDaemons/org.ashforde.enhancer.failsafe.plist` running `/Library/PrivilegedHelperTools/org.ashforde.enhancer.failsafe` every 60 s | If `pmset -g` shows `SleepDisabled 1` and no process named `Monorail`, `Loop`, `Keeper` or `Hangar` is running, runs `pmset -a disablesleep 0` |
 | The lid script | `~/Library/Application Scripts/<bundle id>/ashforde-lid.sh` (0755) for `org.ashforde.monorail.appstore`, `org.ashforde.monorail`, `io.github.ashfordeou.keeper`, `io.github.ashfordeou.keeper.appstore` | `on`, `off`, `status` (below) |
 
 The rule is the same file the downloaded apps already share, so a Mac set up by either is set up for both.
 
 ## Calling it
 
-**Sandboxed apps** (Signalbox, Hangar) run the lid script with
+**Sandboxed apps** (Loop, Hangar) run the lid script with
 `NSUserUnixTask(url: FileManager.default.url(for: .applicationScriptsDirectory, in: .userDomainMask, appropriateFor: nil, create: false).appendingPathComponent("ashforde-lid.sh"))`:
 
 | Argument | Does | Answers |
