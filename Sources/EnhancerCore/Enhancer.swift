@@ -10,10 +10,15 @@ import Foundation
 ///    Ashforde's apps is running, it turns sleep back on.
 /// 3. `ashforde-lid.sh` in each Ashforde app's own scripts folder
 ///    (`~/Library/Application Scripts/<bundle id>/`), which sandboxed apps may run (NSUserUnixTask).
+/// 4. Since 1.1, fan control for Monorail (see `FanHelper`): a small program,
+///    `/Library/PrivilegedHelperTools/ashforde-fan`, a second rule allowing only that program's
+///    `status`, `auto` and `set`, and `ashforde-fan.sh` in Monorail's scripts folder. The fail-safe
+///    also hands the fans back to macOS when no Ashforde app is looking after them.
 public enum Enhancer {
-    public static let version = "1.0.0"
+    public static let version = "1.1.0"
     /// Bumped only when the files or the script's answers change shape.
-    public static let interfaceVersion = 1
+    /// 2 (1.1): the fan helper, the fan script, and `"fan"` in the lid script's status.
+    public static let interfaceVersion = 2
     public static let bundleID = "org.ashforde.enhancer"
     public static let urlScheme = "ashforde-enhancer"
 
@@ -56,15 +61,27 @@ public enum Enhancer {
     }
 
     /// The fail-safe: sleep back on when it's off and no Ashforde app is running (a crash, a force quit).
+    /// Fans back to macOS when the helper has one forced and no Ashforde app is running, or the app
+    /// has stopped re-sending its speeds (the marker is older than `FanHelper.staleMinutes`). Runs at
+    /// boot too (RunAtLoad), and the marker survives a restart, so a crash mid-control is caught there.
     public static func failsafeScript() -> String {
         let checks = watchedProcesses.map { "/usr/bin/pgrep -x \($0) >/dev/null" }.joined(separator: " || ")
+        let fan = FanHelper.helperPath, marker = FanHelper.markerPath
         return """
             #!/bin/sh
             # Ashforde Enhancer \(version) fail-safe: run by launchd once a minute.
+            running=false
+            if { \(checks); }; then running=true; fi
             if \(pmset) -g | /usr/bin/grep -Eq '^[[:space:]]*SleepDisabled[[:space:]]+1'; then
-                if ! { \(checks); }; then
+                if [ "$running" = false ]; then
                     \(pmset) -a disablesleep 0
                     /usr/bin/logger -t ashforde-enhancer "No Ashforde app running: sleep turned back on"
+                fi
+            fi
+            if [ -e \(marker) ] && [ -x \(fan) ]; then
+                if [ "$running" = false ] || /usr/bin/find \(marker) -mmin +\(FanHelper.staleMinutes) | /usr/bin/grep -q .; then
+                    \(fan) auto >/dev/null 2>&1
+                    /usr/bin/logger -t ashforde-enhancer "No Ashforde app looking after the fans: macOS controls them again"
                 fi
             fi
             exit 0
@@ -108,7 +125,9 @@ public enum Enhancer {
                 /usr/bin/sudo -n -l \(pmset) -a disablesleep 1 >/dev/null 2>&1 && rule=true
                 [ -f \(daemonPlistPath) ] && failsafe=true
                 \(pmset) -g | /usr/bin/grep -Eq '^[[:space:]]*SleepDisabled[[:space:]]+1' && disabled=true
-                printf '{"enhancer":\(interfaceVersion),"version":"\(version)","rule":%s,"failsafe":%s,"sleepDisabled":%s}\\n' "$rule" "$failsafe" "$disabled"
+                fan=false
+                [ -x \(FanHelper.helperPath) ] && /usr/bin/sudo -n -l \(FanHelper.helperPath) status >/dev/null 2>&1 && fan=true
+                printf '{"enhancer":\(interfaceVersion),"version":"\(version)","rule":%s,"failsafe":%s,"sleepDisabled":%s,"fan":%s}\\n' "$rule" "$failsafe" "$disabled" "$fan"
                 ;;
             *) echo "usage: $0 on|off|status" >&2; exit 64 ;;
         esac
@@ -117,16 +136,22 @@ public enum Enhancer {
     }
 
     /// The root part of installing, run once with the administrator's password. `stage` is a folder
-    /// only this user can write, holding the three files above.
+    /// only this user can write, holding the files above: `rule`, `failsafe`, `daemon.plist`, and
+    /// since 1.1 `fan-rule` and `fan` (the helper, from the app bundle). Both rules are checked with
+    /// `visudo` before anything goes in place; the fans start in macOS's own control.
     public static func installScript(user: String, stage: String) -> String? {
         guard isValidUser(user), !stage.contains("'") else { return nil }
         return """
             set -e
             S='\(stage)'
             /usr/sbin/visudo -cf "$S/rule" >/dev/null
+            /usr/sbin/visudo -cf "$S/fan-rule" >/dev/null
             /usr/bin/install -m 0440 -o root -g wheel "$S/rule" \(ruleFile)
             /bin/rm -f \(legacyRuleFile)
             /bin/mkdir -p /Library/PrivilegedHelperTools
+            /usr/bin/install -m 0755 -o root -g wheel "$S/fan" \(FanHelper.helperPath)
+            /usr/bin/install -m 0440 -o root -g wheel "$S/fan-rule" \(FanHelper.ruleFile)
+            \(FanHelper.helperPath) auto >/dev/null 2>&1 || true
             /usr/bin/install -m 0755 -o root -g wheel "$S/failsafe" \(failsafePath)
             /usr/bin/install -m 0644 -o root -g wheel "$S/daemon.plist" \(daemonPlistPath)
             /bin/launchctl bootout system/\(daemonLabel) 2>/dev/null || true
@@ -134,11 +159,12 @@ public enum Enhancer {
             """
     }
 
-    /// The root part of removing: everything off again, and sleep back on.
+    /// The root part of removing: everything off again, fans back to macOS, and sleep back on.
     public static func uninstallScript() -> String {
         """
         /bin/launchctl bootout system/\(daemonLabel) 2>/dev/null || true
-        /bin/rm -f \(daemonPlistPath) \(failsafePath) \(ruleFile)
+        [ -x \(FanHelper.helperPath) ] && \(FanHelper.helperPath) auto >/dev/null 2>&1 || true
+        /bin/rm -f \(daemonPlistPath) \(failsafePath) \(ruleFile) \(FanHelper.ruleFile) \(FanHelper.helperPath) \(FanHelper.markerPath)
         \(pmset) -a disablesleep 0
         """
     }
