@@ -31,11 +31,11 @@ public enum Enhancer {
         "org.ashforde.monorail.appstore",  // Signalbox
         "org.ashforde.monorail",  // Monorail (direct; it can also call sudo itself)
         "io.github.ashfordeou.keeper",  // Keeper (direct)
-        "io.github.ashfordeou.keeper.appstore",  // Folio (Keeper's App Store edition)
+        "io.github.ashfordeou.keeper.appstore",  // Hangar (Keeper's App Store edition)
     ]
 
     /// Process names of Ashforde's apps: while any runs, the fail-safe leaves sleep alone.
-    public static let watchedProcesses = ["Monorail", "Signalbox", "Keeper", "Folio"]
+    public static let watchedProcesses = ["Monorail", "Signalbox", "Keeper", "Hangar"]
 
     /// A macOS short user name we're willing to put in a sudoers rule.
     public static func isValidUser(_ name: String) -> Bool {
@@ -48,7 +48,7 @@ public enum Enhancer {
     public static func sudoersRule(user: String) -> String? {
         guard isValidUser(user) else { return nil }
         return """
-            # Ashforde Enhancer \(version): lid-closed mode for Ashforde's apps (Monorail, Signalbox, Keeper, Folio).
+            # Ashforde Enhancer \(version): lid-closed mode for Ashforde's apps (Monorail, Signalbox, Keeper, Hangar).
             # Allows only turning sleep off and on again. Remove with Ashforde Enhancer, or delete this file.
             \(user) ALL=(root) NOPASSWD: \(pmset) -a disablesleep 0, \(pmset) -a disablesleep 1
 

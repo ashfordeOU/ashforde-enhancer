@@ -1,6 +1,6 @@
 # Ashforde Enhancer
 
-One setup so lid-closed mode in Ashforde's apps (**Signalbox** and **Folio** (Keeper) from the Mac App Store,
+One setup so lid-closed mode in Ashforde's apps (**Signalbox** and **Hangar** (Keeper) from the Mac App Store,
 and the downloaded **Monorail** and **Keeper**) stops asking for your password every time.
 
 Apps from the App Store aren't allowed to change the Mac's sleep setting. Ashforde Enhancer is a small,
