@@ -11,6 +11,7 @@ import IOKit
 ///     ashforde-fan status            one line of JSON
 ///     ashforde-fan auto              every fan back to macOS (exit 0, also when there's nothing to undo)
 ///     ashforde-fan set <fan> <rpm>   one fan forced to a speed inside its own range
+///     ashforde-fan charge on|off|limit <n>, adapter on|off, led system|green|orange   (1.2, see ChargeHelper)
 ///
 /// Exit codes: 0 done, 64 usage, 65 no such fan or no readable range, 69 not possible on this Mac,
 /// 70 the SMC refused a write (the fans are handed back to macOS), 77 needs root.
@@ -68,6 +69,34 @@ private final class SMC {
 
     func has(_ key: String) -> Bool { info(key) != nil }
 
+    /// A key's size in bytes, or nil when the Mac has no such key.
+    func size(_ key: String) -> Int? { info(key).map { Int($0.size) } }
+
+    /// A key's raw bytes.
+    func readRaw(_ key: String) -> [UInt8]? {
+        guard let info = info(key), info.size > 0 else { return nil }
+        var input = KeyData()
+        input.key = FanHelper.code(key)
+        input.info = info
+        input.data8 = 5 // read bytes
+        guard let out = call(&input) else { return nil }
+        return withUnsafeBytes(of: out.bytes) { Array($0.prefix(Int(min(info.size, 32)))) }
+    }
+
+    /// Raw bytes to a key whose size matches exactly, then read back to check they stuck.
+    func writeRaw(_ key: String, _ bytes: [UInt8]) -> Bool {
+        guard let info = info(key), Int(info.size) == bytes.count else { return false }
+        var input = KeyData()
+        input.key = FanHelper.code(key)
+        input.info = info
+        input.data8 = 6 // write bytes
+        withUnsafeMutableBytes(of: &input.bytes) { buffer in
+            for (i, byte) in bytes.enumerated() where i < buffer.count { buffer[i] = byte }
+        }
+        guard call(&input) != nil else { return false }
+        return readRaw(key) == bytes
+    }
+
     func read(_ key: String) -> Double? {
         guard let info = info(key) else { return nil }
         var input = KeyData()
@@ -110,17 +139,23 @@ private func fail(_ message: String, _ code: Int32) -> Never {
 }
 
 private var controlled: Bool { FileManager.default.fileExists(atPath: FanHelper.markerPath) }
+private var chargeHeld: Bool { FileManager.default.fileExists(atPath: ChargeHelper.markerPath) }
 
 guard let command = FanHelper.parse(Array(CommandLine.arguments.dropFirst())) else { fail(FanHelper.usage, 64) }
 if command != .status && geteuid() != 0 { fail("ashforde-fan needs to run as root (through its sudo rule).", 77) }
 
 guard let smc = SMC() else {
     if command == .status {
-        print(FanHelper.statusJSON(fans: [], controlled: controlled))
+        let none = ChargeHelper.State(method: .none, adapter: .none, light: false, paused: false, adapterOff: false, limit: nil)
+        print(FanHelper.statusJSON(fans: [], controlled: controlled, charge: ChargeHelper.statusJSON(none, held: chargeHeld)))
         exit(0)
     }
     if command == .auto { // Nothing to hand back.
         try? FileManager.default.removeItem(atPath: FanHelper.markerPath)
+        exit(0)
+    }
+    if command == .charge(.on) || command == .adapter(on: true) || command == .light(.system) { // Nothing to put back.
+        try? FileManager.default.removeItem(atPath: ChargeHelper.markerPath)
         exit(0)
     }
     fail("This Mac's fan controller (the SMC) can't be opened.", 69)
@@ -128,6 +163,27 @@ guard let smc = SMC() else {
 
 let fanCount = min(Int(smc.read(FanHelper.countKey) ?? 0), FanHelper.maxFans)
 let has: (String) -> Bool = { smc.has($0) }
+let keySize: (String) -> Int? = { smc.size($0) }
+
+/// The charging keys as they are now.
+let chargeState: () -> ChargeHelper.State = { ChargeHelper.state(size: keySize, read: { smc.readRaw($0) }) }
+
+/// Writes a charging plan, then keeps the marker in step with the result: present while anything is
+/// held back, gone once all is normal again.
+let applyCharge: (Result<[ChargeHelper.Write], ChargeHelper.PlanError>, Bool) -> Never = { plan, holds in
+    switch plan {
+    case .failure(.unsupported): fail("This Mac doesn't let charging be changed that way.", 69)
+    case .failure(.badValue): fail(FanHelper.usage, 64)
+    case .success(let writes):
+        // The marker first when holding, so the fail-safe knows even if this stops halfway.
+        if holds { FileManager.default.createFile(atPath: ChargeHelper.markerPath, contents: Data(), attributes: [.posixPermissions: 0o644]) }
+        var ok = true
+        for write in writes where !smc.writeRaw(write.key, write.bytes) { ok = false }
+        if chargeState().isNormal { try? FileManager.default.removeItem(atPath: ChargeHelper.markerPath) }
+        if !ok { fail("The SMC didn't take the change; try again.", 70) }
+        exit(0)
+    }
+}
 
 /// Hands every fan back to macOS and clears the marker when that worked.
 let handBack: () -> Bool = {
@@ -148,10 +204,22 @@ case .status:
                                        min: smc.read(FanHelper.minKey(i)), max: smc.read(FanHelper.maxKey(i)),
                                        target: smc.read(FanHelper.targetKey(i)), forced: forced))
     }
-    print(FanHelper.statusJSON(fans: fans, controlled: controlled))
+    print(FanHelper.statusJSON(fans: fans, controlled: controlled, charge: ChargeHelper.statusJSON(chargeState(), held: chargeHeld)))
 
 case .auto:
     if !handBack() { fail("The SMC didn't take every change; try again.", 70) }
+
+case .charge(let charge):
+    let holds: Bool
+    if case .limit(let n) = charge { holds = n < 100 } else { holds = charge == .off }
+    applyCharge(ChargeHelper.planCharge(charge, method: ChargeHelper.method(size: keySize)), holds)
+
+case .adapter(let on):
+    applyCharge(ChargeHelper.planAdapter(on: on, adapter: ChargeHelper.adapter(size: keySize)), !on)
+
+case .light(let light):
+    // The light alone never holds anything back; the marker follows the charging keys.
+    applyCharge(ChargeHelper.planLight(light, has: ChargeHelper.has("ACLC", size: keySize)), false)
 
 case .set(let fan, let rpm):
     var range: (min: Double, max: Double)?

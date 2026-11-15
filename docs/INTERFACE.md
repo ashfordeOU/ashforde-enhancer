@@ -11,7 +11,7 @@ interface version; a change of shape bumps `enhancer` in the status answer.
 | The fail-safe | `/Library/LaunchDaemons/org.ashforde.enhancer.failsafe.plist` running `/Library/PrivilegedHelperTools/org.ashforde.enhancer.failsafe` every 60 s and at start-up | If `pmset -g` shows `SleepDisabled 1` and no process named `Monorail`, `Signalbox`, `Keeper` or `Hangar` is running, runs `pmset -a disablesleep 0`. If `/var/db/ashforde-fan.forced` exists and no such process is running, or it is more than 3 minutes old, runs `ashforde-fan auto` |
 | The lid script | `~/Library/Application Scripts/<bundle id>/ashforde-lid.sh` (0755) for `org.ashforde.monorail.appstore`, `org.ashforde.monorail`, `io.github.ashfordeou.keeper`, `io.github.ashfordeou.keeper.appstore` | `on`, `off`, `status` (below) |
 | The fan helper (1.1) | `/Library/PrivilegedHelperTools/ashforde-fan` (root:wheel, 0755, signed as `org.ashforde.enhancer.fan`) | `status`, `auto`, `set <fan> <rpm>` (below) |
-| The fan rule (1.1) | `/etc/sudoers.d/ashforde-fan` (root:wheel, 0440, checked with `visudo -cf` first) | `<user> ALL=(root) NOPASSWD: /Library/PrivilegedHelperTools/ashforde-fan status, … auto, … set *` |
+| The fan rule (1.1) | `/etc/sudoers.d/ashforde-fan` (root:wheel, 0440, checked with `visudo -cf` first) | `<user> ALL=(root) NOPASSWD: /Library/PrivilegedHelperTools/ashforde-fan status, … auto, … set *`, and since 1.2 `… charge on`, `… charge off`, `… charge limit *`, `… adapter on`, `… adapter off`, `… led *` |
 | The fan script (1.1) | `~/Library/Application Scripts/org.ashforde.monorail/ashforde-fan.sh` (0755), Monorail only | `status`, `auto`, `set <fan> <rpm>`, each through `sudo -n` |
 
 The rule is the same file the downloaded apps already share, so a Mac set up by either is set up for both.
@@ -51,6 +51,34 @@ nothing is written.
 controlling the fans (the fail-safe takes over after 3 minutes of silence); send `auto` when you stop,
 when the Mac goes to sleep and when you quit. Keep your own safety rules: full speed when anything is
 critically hot, and `auto` when the temperatures can't be read.
+
+## Charging (1.2, Monorail only)
+
+The same helper, rule and script (interface 3, helper interface 2). `status` adds
+`"charge":{"method":"chte","adapter":"chie","led":true,"paused":false,"adapterOff":false,"limit":null,"held":false}`;
+no `charge` means the Enhancer is 1.1: offer to set it up again. The lid script's status adds `"charge":true|false`.
+
+| Argument | Does | Answers |
+|---|---|---|
+| `charge on` | Charging allowed: `CHTE` = 00 00 00 00, or `CH0B` and `CH0C` = 00, or (Intel) `BCLM` = 100 | Exit 0 (also on a Mac with none of these keys) |
+| `charge off` | Charging paused: `CHTE` = 01 00 00 00, or `CH0B` and `CH0C` = 02 | Exit 0; 69 on a Mac without these keys; 70 the SMC refused |
+| `charge limit <n>` | Intel only: `BCLM` = `n` (20–100, digits only) | Exit 0; 64 bad value; 69 not an Intel Mac with BCLM |
+| `adapter on` / `adapter off` | The adapter on, or off in software: `CHIE` = 00 / 08, else `CH0J` or `CH0I` = 00 / 01 | Exit 0; 69 none of these keys (for `off`) |
+| `led system` / `green` / `orange` | The MagSafe light: `ACLC` = 00 / 03 / 04 | Exit 0; 69 no `ACLC` (for a colour) |
+
+A key counts only when the SMC reports it at its expected size (4 bytes for `CHTE`, 1 for the rest): newer
+firmware keeps some old names as zero-size placeholders. Bytes are written as they are and read back.
+While anything is held back (charging paused, the adapter off, `BCLM` below 100) the helper keeps
+`/var/db/ashforde-charge.held`; it removes it once all is normal. The fail-safe runs `adapter on`,
+`charge on` and `led system` when that file exists and no Ashforde app is running, or it's more than 10
+minutes old. Setting up runs `adapter on` and `charge on`; Remove runs them before deleting anything.
+
+Key names as used by the MIT-licensed `battery` CLI (github.com/actuallymentor/battery) and bclm
+(github.com/zackelia/bclm); no code is taken from them or from AlDente.
+
+**The apps' side:** send only changes, and everything again every few minutes while holding; put
+everything back (`adapter on`, `charge on`, `led system`) when the limit is turned off and on quit; switch
+the adapter back on before the Mac sleeps; never switch it off at a low charge.
 
 ## Lid: the downloaded apps
 

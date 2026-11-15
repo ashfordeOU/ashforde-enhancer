@@ -14,11 +14,15 @@ import Foundation
 ///    `/Library/PrivilegedHelperTools/ashforde-fan`, a second rule allowing only that program's
 ///    `status`, `auto` and `set`, and `ashforde-fan.sh` in Monorail's scripts folder. The fail-safe
 ///    also hands the fans back to macOS when no Ashforde app is looking after them.
+/// 5. Since 1.2, the charge limit for Monorail (see `ChargeHelper`): the same helper and rule also take
+///    `charge`, `adapter` and `led`; the fail-safe puts normal charging back when no Ashforde app is
+///    looking after it, and Remove does too.
 public enum Enhancer {
-    public static let version = "1.1.0"
+    public static let version = "1.2.0"
     /// Bumped only when the files or the script's answers change shape.
     /// 2 (1.1): the fan helper, the fan script, and `"fan"` in the lid script's status.
-    public static let interfaceVersion = 2
+    /// 3 (1.2): charge, adapter and led through the same script, and `"charge"` in both statuses.
+    public static let interfaceVersion = 3
     public static let bundleID = "org.ashforde.enhancer"
     public static let urlScheme = "ashforde-enhancer"
 
@@ -66,7 +70,7 @@ public enum Enhancer {
     /// boot too (RunAtLoad), and the marker survives a restart, so a crash mid-control is caught there.
     public static func failsafeScript() -> String {
         let checks = watchedProcesses.map { "/usr/bin/pgrep -x \($0) >/dev/null" }.joined(separator: " || ")
-        let fan = FanHelper.helperPath, marker = FanHelper.markerPath
+        let fan = FanHelper.helperPath, marker = FanHelper.markerPath, held = ChargeHelper.markerPath
         return """
             #!/bin/sh
             # Ashforde Enhancer \(version) fail-safe: run by launchd once a minute.
@@ -82,6 +86,15 @@ public enum Enhancer {
                 if [ "$running" = false ] || /usr/bin/find \(marker) -mmin +\(FanHelper.staleMinutes) | /usr/bin/grep -q .; then
                     \(fan) auto >/dev/null 2>&1
                     /usr/bin/logger -t ashforde-enhancer "No Ashforde app looking after the fans: macOS controls them again"
+                fi
+            fi
+            if [ -e \(held) ] && [ -x \(fan) ]; then
+                if [ "$running" = false ] || /usr/bin/find \(held) -mmin +\(ChargeHelper.staleMinutes) | /usr/bin/grep -q .; then
+                    \(fan) adapter on >/dev/null 2>&1
+                    \(fan) charge on >/dev/null 2>&1
+                    \(fan) led system >/dev/null 2>&1
+                    /bin/rm -f \(held)
+                    /usr/bin/logger -t ashforde-enhancer "No Ashforde app looking after charging: normal charging is back"
                 fi
             fi
             exit 0
@@ -125,9 +138,10 @@ public enum Enhancer {
                 /usr/bin/sudo -n -l \(pmset) -a disablesleep 1 >/dev/null 2>&1 && rule=true
                 [ -f \(daemonPlistPath) ] && failsafe=true
                 \(pmset) -g | /usr/bin/grep -Eq '^[[:space:]]*SleepDisabled[[:space:]]+1' && disabled=true
-                fan=false
+                fan=false; charge=false
                 [ -x \(FanHelper.helperPath) ] && /usr/bin/sudo -n -l \(FanHelper.helperPath) status >/dev/null 2>&1 && fan=true
-                printf '{"enhancer":\(interfaceVersion),"version":"\(version)","rule":%s,"failsafe":%s,"sleepDisabled":%s,"fan":%s}\\n' "$rule" "$failsafe" "$disabled" "$fan"
+                [ -x \(FanHelper.helperPath) ] && /usr/bin/sudo -n -l \(FanHelper.helperPath) charge on >/dev/null 2>&1 && charge=true
+                printf '{"enhancer":\(interfaceVersion),"version":"\(version)","rule":%s,"failsafe":%s,"sleepDisabled":%s,"fan":%s,"charge":%s}\\n' "$rule" "$failsafe" "$disabled" "$fan" "$charge"
                 ;;
             *) echo "usage: $0 on|off|status" >&2; exit 64 ;;
         esac
@@ -152,6 +166,8 @@ public enum Enhancer {
             /usr/bin/install -m 0755 -o root -g wheel "$S/fan" \(FanHelper.helperPath)
             /usr/bin/install -m 0440 -o root -g wheel "$S/fan-rule" \(FanHelper.ruleFile)
             \(FanHelper.helperPath) auto >/dev/null 2>&1 || true
+            \(FanHelper.helperPath) adapter on >/dev/null 2>&1 || true
+            \(FanHelper.helperPath) charge on >/dev/null 2>&1 || true
             /usr/bin/install -m 0755 -o root -g wheel "$S/failsafe" \(failsafePath)
             /usr/bin/install -m 0644 -o root -g wheel "$S/daemon.plist" \(daemonPlistPath)
             /bin/launchctl bootout system/\(daemonLabel) 2>/dev/null || true
@@ -164,7 +180,10 @@ public enum Enhancer {
         """
         /bin/launchctl bootout system/\(daemonLabel) 2>/dev/null || true
         [ -x \(FanHelper.helperPath) ] && \(FanHelper.helperPath) auto >/dev/null 2>&1 || true
-        /bin/rm -f \(daemonPlistPath) \(failsafePath) \(ruleFile) \(FanHelper.ruleFile) \(FanHelper.helperPath) \(FanHelper.markerPath)
+        [ -x \(FanHelper.helperPath) ] && \(FanHelper.helperPath) adapter on >/dev/null 2>&1 || true
+        [ -x \(FanHelper.helperPath) ] && \(FanHelper.helperPath) charge on >/dev/null 2>&1 || true
+        [ -x \(FanHelper.helperPath) ] && \(FanHelper.helperPath) led system >/dev/null 2>&1 || true
+        /bin/rm -f \(daemonPlistPath) \(failsafePath) \(ruleFile) \(FanHelper.ruleFile) \(FanHelper.helperPath) \(FanHelper.markerPath) \(ChargeHelper.markerPath)
         \(pmset) -a disablesleep 0
         """
     }

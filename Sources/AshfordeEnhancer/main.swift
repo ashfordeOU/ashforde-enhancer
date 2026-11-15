@@ -19,13 +19,15 @@ enum Setup {
         var scripts: [String] = []
         /// The fan helper is in place and its rule works (1.1).
         var fan = false
+        /// The rule also allows charging (1.2).
+        var charge = false
 
-        /// Everything this version sets up, so a Mac set up by 1.0 offers to set up again.
-        var installed: Bool { rule && failsafe && fan }
+        /// Everything this version sets up, so a Mac set up by 1.0 or 1.1 offers to set up again.
+        var installed: Bool { rule && failsafe && fan && charge }
 
         var json: String {
             let list = scripts.map { "\"\($0)\"" }.joined(separator: ",")
-            return "{\"enhancer\":\(Enhancer.interfaceVersion),\"version\":\"\(Enhancer.version)\",\"rule\":\(rule),\"failsafe\":\(failsafe),\"sleepDisabled\":\(sleepDisabled),\"fan\":\(fan),\"scripts\":[\(list)]}"
+            return "{\"enhancer\":\(Enhancer.interfaceVersion),\"version\":\"\(Enhancer.version)\",\"rule\":\(rule),\"failsafe\":\(failsafe),\"sleepDisabled\":\(sleepDisabled),\"fan\":\(fan),\"charge\":\(charge),\"scripts\":[\(list)]}"
         }
     }
 
@@ -53,6 +55,7 @@ enum Setup {
         status.sleepDisabled = Enhancer.sleepDisabled(pmsetOutput: run(Enhancer.pmset, ["-g"]).output)
         status.fan = FileManager.default.isExecutableFile(atPath: FanHelper.helperPath)
             && run("/usr/bin/sudo", ["-n", "-l", FanHelper.helperPath, "status"]).status == 0
+        status.charge = status.fan && run("/usr/bin/sudo", ["-n", "-l", FanHelper.helperPath, "charge", "on"]).status == 0
         status.scripts = Enhancer.clients.filter {
             FileManager.default.isExecutableFile(atPath: scriptsRoot.appendingPathComponent("\($0)/\(Enhancer.lidScriptName)").path)
         }
@@ -191,7 +194,7 @@ final class Model: ObservableObject {
         DispatchQueue.main.async {
             do {
                 try install ? Setup.install() : Setup.uninstall()
-                self.message = install ? "Done. Lid-closed mode won't ask for your password any more, and Monorail can set fan speeds." : "Removed. Sleep and fans work as usual again."
+                self.message = install ? "Done. Lid-closed mode won't ask for your password any more, and Monorail can set fan speeds and limit charging." : "Removed. Sleep, fans and charging work as usual again."
             } catch Setup.Failure.cancelled {
             } catch {
                 self.message = error.localizedDescription
@@ -211,7 +214,7 @@ struct EnhancerView: View {
                 Image(systemName: "laptopcomputer").font(.system(size: 34)).foregroundStyle(.tint)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Ashforde Enhancer").font(.system(size: 20, weight: .bold))
-                    Text("Lid-closed mode without the password for Monorail, Signalbox and Keeper, and fan control for Monorail.")
+                    Text("Lid-closed mode without the password for Monorail, Signalbox and Keeper, and fan control and the charge limit for Monorail.")
                         .font(.system(size: 12)).foregroundStyle(.secondary)
                 }
             }
@@ -221,8 +224,10 @@ struct EnhancerView: View {
                     "Only `pmset -a disablesleep 0` and `1`, only for you.")
                 row("Permission to set fan speeds", model.status.fan,
                     "Only the small fan helper, only for you: read the fans, set one to a speed inside its own range, or hand them back to macOS.")
+                row("Permission to pause charging", model.status.charge,
+                    "The same helper, only for you: pause or resume charging, switch the adapter off or on, and set the MagSafe light. Nothing else.")
                 row("Fail-safe", model.status.failsafe,
-                    "Once a minute: if none of Ashforde's apps is running, sleep goes back on and the fans go back to macOS.")
+                    "Once a minute: if none of Ashforde's apps is running, sleep goes back on, the fans go back to macOS and normal charging comes back.")
                 row("Ready in your apps", !model.status.scripts.isEmpty,
                     model.status.scripts.isEmpty ? "Not set up yet." : "Set up for \(model.status.scripts.count) Ashforde apps.")
             }
