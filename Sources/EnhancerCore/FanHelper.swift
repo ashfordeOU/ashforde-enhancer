@@ -35,6 +35,10 @@ public enum FanHelper {
         case status
         case auto
         case set(fan: Int, rpm: Int)
+        /// Since 1.2: charging (see `ChargeHelper`).
+        case charge(ChargeHelper.Charge)
+        case adapter(on: Bool)
+        case light(ChargeHelper.Light)
     }
 
     /// Strict: exactly one of the three shapes, plain ASCII digits only (no signs, spaces, hex or
@@ -47,6 +51,15 @@ public enum FanHelper {
             guard let fan = number(arguments[1], maxDigits: 1), fan < maxFans,
                   let rpm = number(arguments[2], maxDigits: 5), rpm <= maxRPM else { return nil }
             return .set(fan: fan, rpm: rpm)
+        case 2 where arguments[0] == "charge" && arguments[1] == "on": return .charge(.on)
+        case 2 where arguments[0] == "charge" && arguments[1] == "off": return .charge(.off)
+        case 3 where arguments[0] == "charge" && arguments[1] == "limit":
+            guard let n = number(arguments[2], maxDigits: 3), (20...100).contains(n) else { return nil }
+            return .charge(.limit(n))
+        case 2 where arguments[0] == "adapter" && arguments[1] == "on": return .adapter(on: true)
+        case 2 where arguments[0] == "adapter" && arguments[1] == "off": return .adapter(on: false)
+        case 2 where arguments[0] == "led":
+            return ChargeHelper.Light(rawValue: arguments[1]).map { .light($0) }
         default: return nil
         }
     }
@@ -57,7 +70,7 @@ public enum FanHelper {
         return Int(text)
     }
 
-    public static let usage = "usage: ashforde-fan status | auto | set <fan 0-9> <rpm>"
+    public static let usage = "usage: ashforde-fan status | auto | set <fan 0-9> <rpm> | charge on|off|limit <20-100> | adapter on|off | led system|green|orange"
 
     /// A requested speed kept inside the fan's own range (as the SMC reports it). Nil when the range
     /// doesn't make sense, so nothing is written.
@@ -228,9 +241,9 @@ public enum FanHelper {
         }
     }
 
-    /// `status`'s one line: `{"helper":1,"version":"1.1.0","fans":[{"index":0,"rpm":1200,"min":1200,"max":5779,"target":1200,"forced":false}],"controlled":false}`.
-    /// `controlled` is the marker: the helper has a fan forced right now.
-    public static func statusJSON(fans: [FanState], controlled: Bool) -> String {
+    /// `status`'s one line: `{"helper":2,"version":"1.2.0","fans":[{"index":0,"rpm":1200,"min":1200,"max":5779,"target":1200,"forced":false}],"controlled":false,"charge":{…}}`.
+    /// `controlled` is the marker: the helper has a fan forced right now. `charge` (1.2) is `ChargeHelper.statusJSON`.
+    public static func statusJSON(fans: [FanState], controlled: Bool, charge: String? = nil) -> String {
         func number(_ value: Double?) -> String {
             guard let value, value.isFinite else { return "null" }
             return String(Int(value.rounded()))
@@ -238,11 +251,13 @@ public enum FanHelper {
         let list = fans.map {
             "{\"index\":\($0.index),\"rpm\":\(number($0.rpm)),\"min\":\(number($0.min)),\"max\":\(number($0.max)),\"target\":\(number($0.target)),\"forced\":\($0.forced)}"
         }.joined(separator: ",")
-        return "{\"helper\":\(helperInterface),\"version\":\"\(Enhancer.version)\",\"fans\":[\(list)],\"controlled\":\(controlled)}"
+        let chargePart = charge.map { ",\"charge\":" + $0 } ?? ""
+        return "{\"helper\":\(helperInterface),\"version\":\"\(Enhancer.version)\",\"fans\":[\(list)],\"controlled\":\(controlled)\(chargePart)}"
     }
 
     /// Bumped only when the helper's subcommands or answers change shape.
-    public static let helperInterface = 1
+    /// 2 (1.2): charge, adapter and led, and `"charge"` in `status`.
+    public static let helperInterface = 2
 
     // MARK: What the Enhancer installs
 
@@ -252,9 +267,9 @@ public enum FanHelper {
     public static func sudoersRule(user: String) -> String? {
         guard Enhancer.isValidUser(user) else { return nil }
         return """
-            # Ashforde Enhancer \(Enhancer.version): fan control for Monorail.
-            # Allows only the fan helper's status, auto and set. Remove with Ashforde Enhancer, or delete this file.
-            \(user) ALL=(root) NOPASSWD: \(helperPath) status, \(helperPath) auto, \(helperPath) set *
+            # Ashforde Enhancer \(Enhancer.version): fan control and the charge limit for Monorail.
+            # Allows only the helper's status, auto, set, charge, adapter and led. Remove with Ashforde Enhancer, or delete this file.
+            \(user) ALL=(root) NOPASSWD: \(helperPath) status, \(helperPath) auto, \(helperPath) set *, \(helperPath) charge on, \(helperPath) charge off, \(helperPath) charge limit *, \(helperPath) adapter on, \(helperPath) adapter off, \(helperPath) led *
 
             """
     }
@@ -264,15 +279,23 @@ public enum FanHelper {
     public static func script() -> String {
         """
         #!/bin/sh
-        # Ashforde Enhancer \(Enhancer.version) fan script (interface \(Enhancer.interfaceVersion)). Usage: ashforde-fan.sh status|auto|set <fan> <rpm>
+        # Ashforde Enhancer \(Enhancer.version) fan and charge script (interface \(Enhancer.interfaceVersion)).
+        # Usage: ashforde-fan.sh status|auto|set <fan> <rpm>|charge on|off|limit <n>|adapter on|off|led system|green|orange
         H=\(helperPath)
-        [ -x "$H" ] || { echo "The fan helper isn't installed." >&2; exit 69; }
+        [ -x "$H" ] || { echo "The helper isn't installed." >&2; exit 69; }
         case "$1" in
             status) [ $# -eq 1 ] && exec /usr/bin/sudo -n "$H" status ;;
             auto) [ $# -eq 1 ] && exec /usr/bin/sudo -n "$H" auto ;;
             set) [ $# -eq 3 ] && exec /usr/bin/sudo -n "$H" set "$2" "$3" ;;
+            charge)
+                case "$2" in
+                    on|off) [ $# -eq 2 ] && exec /usr/bin/sudo -n "$H" charge "$2" ;;
+                    limit) [ $# -eq 3 ] && exec /usr/bin/sudo -n "$H" charge limit "$3" ;;
+                esac ;;
+            adapter) [ $# -eq 2 ] && case "$2" in on|off) exec /usr/bin/sudo -n "$H" adapter "$2" ;; esac ;;
+            led) [ $# -eq 2 ] && case "$2" in system|green|orange) exec /usr/bin/sudo -n "$H" led "$2" ;; esac ;;
         esac
-        echo "usage: $0 status|auto|set <fan> <rpm>" >&2
+        echo "usage: $0 status|auto|set <fan> <rpm>|charge on|off|limit <n>|adapter on|off|led system|green|orange" >&2
         exit 64
 
         """

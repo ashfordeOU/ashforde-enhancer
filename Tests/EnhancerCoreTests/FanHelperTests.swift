@@ -119,7 +119,7 @@ final class FanHelperTests: XCTestCase {
     func testStatusLine() throws {
         let line = FanHelper.statusJSON(fans: [FanHelper.FanState(index: 0, rpm: 1203.4, min: 1200, max: 5779, target: nil, forced: false)],
                                         controlled: false)
-        XCTAssertEqual(line, "{\"helper\":1,\"version\":\"\(Enhancer.version)\",\"fans\":[{\"index\":0,\"rpm\":1203,\"min\":1200,\"max\":5779,\"target\":null,\"forced\":false}],\"controlled\":false}")
+        XCTAssertEqual(line, "{\"helper\":2,\"version\":\"\(Enhancer.version)\",\"fans\":[{\"index\":0,\"rpm\":1203,\"min\":1200,\"max\":5779,\"target\":null,\"forced\":false}],\"controlled\":false}")
         XCTAssertNoThrow(try JSONSerialization.jsonObject(with: Data(line.utf8)))
     }
 
@@ -129,7 +129,7 @@ final class FanHelperTests: XCTestCase {
         let rule = try XCTUnwrap(FanHelper.sudoersRule(user: "sam"))
         let lines = rule.split(separator: "\n").map(String.init).filter { !$0.hasPrefix("#") && !$0.isEmpty }
         let h = FanHelper.helperPath
-        XCTAssertEqual(lines, ["sam ALL=(root) NOPASSWD: \(h) status, \(h) auto, \(h) set *"])
+        XCTAssertEqual(lines, ["sam ALL=(root) NOPASSWD: \(h) status, \(h) auto, \(h) set *, \(h) charge on, \(h) charge off, \(h) charge limit *, \(h) adapter on, \(h) adapter off, \(h) led *"])
         XCTAssertTrue(rule.hasSuffix("\n"))
         XCTAssertNil(FanHelper.sudoersRule(user: "root"))
         XCTAssertNil(FanHelper.sudoersRule(user: "a b"))

@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.0] - Unreleased
+
+### Added
+- **Charge limit for Monorail.** The helper also takes `charge on|off|limit <n>`, `adapter on|off` and `led system|green|orange`, allowed by the same rule and nothing more. It uses the keys this Mac really has (CHTE, or CH0B and CH0C on Apple silicon; BCLM on Intel; CHIE, CH0J or CH0I for the adapter; ACLC for the MagSafe light), skips zero-size placeholders, and reads back what it wrote. `status` reports what's possible and what's held. Interface version 3.
+- **The fail-safe puts normal charging back** within a minute of no Ashforde app running, or after 10 minutes without Monorail re-sending its state. Setting up and Remove put it back too.
+
+### Changed
+- A Mac set up with 1.1 shows **Set Up Again** until the new rule is in place.
+
 ## [1.1.0] - Unreleased
 
 ### Added
